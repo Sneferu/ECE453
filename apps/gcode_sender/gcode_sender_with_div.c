@@ -15,14 +15,15 @@
 
 //Defined in ece453.h
 /*
-#define GCODE_30_REG "/sys/kernel/ece453/gCode30"
-#define GCODE_74_REG "/sys/kernel/ece453/gCode74"
-#define GCODE_118_REG "/sys/kernel/ece453/gCode118"
-#define GCODE_1512_REG "/sys/kernel/ece453/gCode1512"
-#define GCODE_1916_REG "/sys/kernel/ece453/gCode1916"
-#define GCODE_2320_REG "/sys/kernel/ece453/gCode2320"
+#define GCODE_DIRX_REG "/sys/kernel/ece453/gCode30"
+#define GCODE_STEPX_REG "/sys/kernel/ece453/gCode74"
+#define GCODE_DIRY_REG "/sys/kernel/ece453/gCode118"
+#define GCODE_STEPY_REG "/sys/kernel/ece453/gCode1512"
+#define GCODE_DIRZ_REG "/sys/kernel/ece453/gCode1916"
+#define GCODE_STEPZ_REG "/sys/kernel/ece453/gCode2320"
 #define GCODE_2724_REG "/sys/kernel/ece453/gCode2724"
 #define GCODE_STEPDIV_REG "/sys/kernel/ece453/gCodeStepDiv"
+#define GCODE_STEP_FACTOR 500
 //Done with control reg#define GCODE_TRMT_REG "/sys/kernel/ece453/gCodeRdy"
 */
 
@@ -215,16 +216,19 @@ int main(int argc, char* argv[])
 	int j;
 	int xIndex;
 	int yIndex;
+	int zIndex;
 	double prevX;
 	double prevY;
+	double prevZ;
 	double absDistX;
 	double absDistY;
+	double absDistZ;
 	double incX;
 	double incY;
+	double incZ;
 	double dblXInc;
 	double dblYInc;
-	char strXInc[8];
-	char strYInc[8];
+	double dblZInc;
 	int step_ratio;
 	done_sig.sa_sigaction = receiveData;
 	done_sig.sa_flags = SA_SIGINFO; //might need to set differently
@@ -248,6 +252,7 @@ int main(int argc, char* argv[])
 	//read file line by line and write to reg
 	prevX = 0;
 	prevY = 0;
+	prevZ = 0;
 	eof = 0;
 	printf("Initial: GPIO_OUT_REG:%d\n\r", ece453_reg_read(GPIO_OUT_REG));
 	while(!eof)
@@ -266,6 +271,7 @@ int main(int argc, char* argv[])
 		//find X, Y
 		xIndex = findCharIndex(line, 'X');
 		yIndex = findCharIndex(line, 'Y');
+		zIndex = findCharIndex(line, 'Z');
 		
 		//replace absolute distances with incremental ones
 		if(xIndex >= 0)
@@ -273,10 +279,7 @@ int main(int argc, char* argv[])
 			absDistX = findAbsoluteDist(line, xIndex);
 			dblXInc = absDistX - prevX;
 			prevX = absDistX;
-			snprintf(strXInc, 8, "%f", dblXInc);
 			
-			//insert string into x
-			replaceSubstring(line, strXInc, xIndex + 1);
 			
 		}
 		if(yIndex >= 0)
@@ -284,12 +287,15 @@ int main(int argc, char* argv[])
 			absDistY = findAbsoluteDist(line, yIndex);
 			dblYInc = absDistY - prevY;
 			prevY = absDistY;
-			snprintf(strYInc, 8, "%f", dblYInc);
 			
-			//insert string into y
-			replaceSubstring(line, strYInc, yIndex + 1);
 		}
-		
+		if(zIndex >= 0)
+		{
+			absDistZ = findAbsoluteDist(line, zIndex);
+			dblZInc = absDistZ - prevZ;
+			prevZ = absDistZ;
+			
+		}
 		if(yIndex >= 0 && xIndex >= 0)
 		{
 			step_ratio = step_div(dblXInc, dblYInc);
@@ -302,44 +308,14 @@ int main(int argc, char* argv[])
 
 		//fill registers, each one 4bytes wide
 
-		for(j = 0; j < 28; j += 4)
-		{
-			//load byte into val
-			val = line[j]; //byte 0
-			val += (line[j+1] << 8); //shift line 1 
-			val += (line[j+2] << 16);
-			val += (line[j+3] << 24);
-		
-			//write val to reg correct reg
-			switch(j)
-			{
-					case 0 :
-						ece453_reg_write(GCODE_30_REG, val);
-						break;
-					case 4 :
-						ece453_reg_write(GCODE_74_REG, val);
-						break;
-					case 8 :
-						ece453_reg_write(GCODE_118_REG, val);
-							break;
-					case 12 :
-						ece453_reg_write(GCODE_1512_REG, val);
-						break;
-					case 16 :
-						ece453_reg_write(GCODE_1916_REG, val);
-						break;
-					case 20 :
-						ece453_reg_write(GCODE_2320_REG, val);
-						break;
-					case 24:
-						ece453_reg_write(GCODE_2724_REG, val);
-						break;
-					//case 28 :
-						//ece453_reg_write(GCODE_3128_REG, val);
-						//break;
-			}
+		ece453_reg_write(GCODE_STEPX_REG, (int)(dblXInc*GCODE_STEP_FACTOR));
+		ece453_reg_write(GCODE_DIRX_REG, dblXInc>0?1:0);
+		ece453_reg_write(GCODE_STEPY_REG, (int)(dblYInc*GCODE_STEP_FACTOR));
+		ece453_reg_write(GCODE_DIRY_REG, dblYInc>0?1:0);
+		ece453_reg_write(GCODE_STEPZ_REG, (int)dblZInc*GCODE_STEP_FACTOR);
+		ece453_reg_write(GCODE_DIRZ_REG, dblZInc>0?1:0);
+		//ece453_reg_write(GCODE_2724_REG, val);
 				
-		}
 		ece453_reg_write(GCODE_STEPDIV_REG, step_ratio);
 		// enable reception of a signal when Gcode finishes interpretation
     ece453_reg_write(IM_REG,  GCODEDONE | KEY0);
